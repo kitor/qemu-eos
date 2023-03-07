@@ -18,15 +18,9 @@
 #include "exec/address-spaces.h"
 #include "sysemu/sysemu.h"
 #include "hw/misc/unimp.h"
-#include "hw/char/cmsdk-apb-uart.h"
-#include "hw/timer/cmsdk-apb-timer.h"
-#include "hw/timer/cmsdk-apb-dualtimer.h"
-#include "hw/misc/mps2-scc.h"
-#include "hw/misc/mps2-fpgaio.h"
+#include "hw/char/pl011.h"
 #include "hw/ssi/pl022.h"
 #include "hw/i2c/arm_sbcon_i2c.h"
-#include "hw/net/lan9118.h"
-#include "net/net.h"
 #include "hw/watchdog/cmsdk-apb-watchdog.h"
 #include "hw/qdev-clock.h"
 #include "qom/object.h"
@@ -273,6 +267,9 @@ void custom_logger(const char *fmt, ...)
 
 static void eosmpu_init(MachineState *machine)
 {
+    //static const int uart_irq[] = {0x3C, 0x3D, 0x3F };
+    //static const int sio_uart_irq[] = {0x59, 0x5A, 0x5B };
+
     EOSMPUMachineState *mms = EOSMPU_MACHINE(machine);
     //EOSMPUMachineClass *mmc = EOSMPU_MACHINE_GET_CLASS(machine);
     MemoryRegion *system_memory = get_system_memory();
@@ -304,6 +301,15 @@ static void eosmpu_init(MachineState *machine)
     memory_region_init_io(&mms->bl_mmio->mem, NULL, &bl_mmio_ops, &mms->bl_mmio, "eosmpu.bl_mmio", 0x10000);
     memory_region_add_subregion(system_memory, 0x5DFF0000, &mms->bl_mmio->mem);
 
+    // PL011 UART at 0x44000000 + maybe extra at i * 0x1000
+    /* for (i = 0; i < 2; i++) {
+        if (board->dc2 & (1 << i)) {
+            pl011_luminary_create(0x40000000 + i * 0x1000,
+                                  qdev_get_gpio_in(nvic, uart_irq[i]),
+                                  serial_hd(i));
+        }
+    } */
+
     *(&mms->mmio_0x4009) = g_new(mmio_0x4009, 1);
     memory_region_init_io(&mms->mmio_0x4009->mem, NULL, &mmio_0x4009_ops, &mms->mmio_0x4009, "eosmpu.mmio_0x4009", 0x10000);
     memory_region_add_subregion(system_memory, 0x40090000, &mms->mmio_0x4009->mem);
@@ -312,6 +318,8 @@ static void eosmpu_init(MachineState *machine)
     memory_region_init_io(&mms->mmio_0x400f->mem, NULL, &mmio_0x400f_ops, &mms->mmio_0x400f, "eosmpu.mmio_0x400f", 0x10000);
     memory_region_add_subregion(system_memory, 0x400F0000, &mms->mmio_0x400f->mem);
 
+    // SIO is at 400bb000 + i* 0x100; 4 channels
+    // Toshiba specific implementation. R5 seems to use 400bb100 as UART
     *(&mms->mmio_0x400b) = g_new(mmio_0x400b, 1);
     memory_region_init_io(&mms->mmio_0x400b->mem, NULL, &mmio_0x400b_ops, &mms->mmio_0x400b, "eosmpu.mmio_0x400b", 0x10000);
     memory_region_add_subregion(system_memory, 0x400b0000, &mms->mmio_0x400b->mem);
