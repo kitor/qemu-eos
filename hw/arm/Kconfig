@@ -277,6 +277,12 @@ config SABRELITE
     select FSL_IMX6
     select SSI_M25P80
 
+config EOSMPU
+    bool
+    default y
+    select ARM_V7M
+    select PL011 # UART
+
 config STELLARIS
     bool
     default y
