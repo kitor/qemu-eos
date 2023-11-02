@@ -22,14 +22,14 @@
 #include "qom/object.h"
 #include "cpu.h"
 
+// this shall go to header file
 #define DIGIC8_PERIPHBASE       (0xC000000)
 #define DIGIC8_GIC_CPU_IF_ADDR  DIGIC8_PERIPHBASE + 0x100
 #define DIGIC8_NUM_CPUS         (2)
 #define DIGIC8_NUM_IRQ_GIC      (64)
 #define DIGIC8_NUM_IRQ_LEGACY   (512)
 
-#define DIGIC8_BOOT_ADDR        (0xe0000000)
-
+// this shall go into UART device implementation
 typedef struct {
     MemoryRegion mem;
     uint32_t flags;
@@ -42,7 +42,6 @@ typedef struct {
 #define ST_RX_RDY (1 << 0)
 #define ST_TX_RDY (1 << 1)
 
-/* io range access */
 static uint64_t DigicUartDev_read(void *ptr, hwaddr addr, unsigned size) {
     DigicUartState *s = (DigicUartState*)ptr;
     
@@ -114,7 +113,7 @@ typedef struct DigicUart {
 } DigicUart;
 
 typedef struct SpiROMClass {
-    uint64_t address;
+    hwaddr address;
     uint64_t size;
     uint32_t exists;
 } SpiROMClass;
@@ -122,7 +121,7 @@ typedef struct SpiROMClass {
 struct DIGIC8MachineClass {
     MachineClass parent;
     DigicUart uart;
-    uint64_t boot_address;
+    hwaddr boot_address;
 };
 
 struct DIGIC8MachineState {
@@ -168,38 +167,45 @@ OBJECT_DECLARE_TYPE(EOSRMachineState, EOSRMachineClass, EOSR_MACHINE)
 // Main SYSCLK frequency in Hz (1ghz?)
 #define SYSCLK_FRQ 1000000000
 
+
+
 static void eos_r_init(MachineState *machine)
 {
     printf("eos_r_init\n");
   
     EOSRMachineState *s = EOSR_MACHINE(machine);
     EOSRMachineClass *c = EOSR_MACHINE_GET_CLASS(machine);
-    MemoryRegion *system_memory = get_system_memory();
-    Clock *sysclk;
+    //MemoryRegion *system_memory = get_system_memory();
     int i;
  
+    /*
+    // What about clocks? a9 seems to run without one defined?
+    Clock *sysclk;
     sysclk = clock_new(OBJECT(machine), "SYSCLK");
     clock_set_hz(sysclk, SYSCLK_FRQ);
+    // Yet NPCM7xx defines a clock like this:
+    //object_initialize_child(machine, "clk", &s->eos.digic.clk, TYPE_NPCM7XX_CLK);
+    */
 
-  
-    //see npcm7xx.c
-    for (i = 0; i < 2; i++) {
+    // Create CPU objects for cores.
+    // For reference about Cortex A9 setup see npcm7xx.c
+    for (i = 0; i < DIGIC8_NUM_CPUS; i++) {
         object_initialize_child((Object *)machine, "cpu[*]", &s->eos.digic.cpu[i],
                                 ARM_CPU_TYPE_NAME("cortex-a9"));
     }  
     object_initialize_child((Object *)machine, "a9mpcore", &s->eos.digic.a9mpcore, TYPE_A9MPCORE_PRIV);
-    //object_initialize_child(machine, "clk", &s->eos.digic.clk, TYPE_NPCM7XX_CLK);
     
+
     //ROM0; let's init this as RAM for now
     memory_region_init_ram_from_file(&s->eos.rom0, NULL, "eos.rom0", 
             *(uint64_t *)&c->eos.rom0.size, 0, RAM_PMEM, "/tmp/rom0.bin", 0, 1, &error_fatal);
-    memory_region_add_subregion(system_memory, *(uint64_t *)&c->eos.rom0.address, &s->eos.rom0);
+    memory_region_add_subregion(get_system_memory(), *(uint64_t *)&c->eos.rom0.address, &s->eos.rom0);
  
     //ROM1; let's init this as RAM for now
-    if(&c->eos.rom1.exists) {
+    if(&c->eos.rom1.size) {
         memory_region_init_ram_from_file(&s->eos.rom1, NULL, "eos.rom1", 
                 *(uint64_t *)&c->eos.rom1.size, 0, RAM_PMEM, "/tmp/rom1.bin", 0, 1, &error_fatal);
-        memory_region_add_subregion(system_memory, *(uint64_t *)&c->eos.rom1.address, &s->eos.rom1);
+        memory_region_add_subregion(get_system_memory(), *(uint64_t *)&c->eos.rom1.address, &s->eos.rom1);
     } 
 
     //RAM - uncacheable part (0x40000000 and above)
@@ -215,15 +221,12 @@ static void eos_r_init(MachineState *machine)
     // TCM, 0xDF000000 - size unknown, assume 0x01000000
     memory_region_init_ram(&s->eos.tcm, NULL, "eos.tcm", 0x1000000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0xDF000000, &s->eos.tcm);
-    
+
     // Connect UART dev
     *(&s->eos.digic.uart) = g_new(DigicUartState, 1);
     memory_region_init_io(&s->eos.digic.uart->mem, NULL, &DigicUart_ops, &s->eos.digic.uart, "digic8.uart", 0x1000);
     memory_region_add_subregion(get_system_memory(), 0xC0800000, &s->eos.digic.uart->mem);
 
-    //object_property_set_link(OBJECT(&s->eos.digic.armv7m), "memory",
-      //                       OBJECT(system_memory), &error_abort);
-    //sysbus_realize(SYS_BUS_DEVICE(&s->eos.digic.armv7m), &error_fatal); 
     
     // realize
     for (i = 0; i < DIGIC8_NUM_CPUS; i++) {
@@ -260,7 +263,7 @@ static void eos_r_init(MachineState *machine)
     }
 
     for (i = 0; i < DIGIC8_NUM_CPUS; i++) {  
-        cpu_set_pc(CPU(&s->eos.digic.cpu[i]), DIGIC8_BOOT_ADDR);
+        cpu_set_pc(CPU(&s->eos.digic.cpu[i]), c->eos.digic.boot_address);
     }
 }
 
@@ -273,12 +276,8 @@ static void digic8_class_init(ObjectClass *oc, void *data)
     // ARM part is a dual-core ARM Cortex A9
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
     mc->max_cpus = DIGIC8_NUM_CPUS;
-    mc->default_cpus = DIGIC8_NUM_CPUS;
+    mc->default_cpus = mc->max_cpus;
     
-    // Every core has 0x1000 private region, shall we init it here or not?
-    mc->default_ram_size = 16 * KiB;
-    mc->default_ram_id = "eosmpu.default_ram";
-
     // Early development, disable transaction failures at all
     mc->ignore_memory_transaction_failures = true;
   
@@ -299,7 +298,6 @@ static void digic8_eos_class_init(ObjectClass *oc, void *data)
     // ROM0 at 0xE0000000, optional ROM1 at 0xF0000000
     eos->rom0.address = 0xE0000000;
     eos->rom1.address = 0xF0000000;
-    eos->rom0.exists = 1;
     
     // boots from 0xE0000000 (start of ROM0)
     eos->digic.boot_address = 0xE0000000;
@@ -318,10 +316,9 @@ static void eos_r_class_init(ObjectClass *oc, void *data)
     printf("eos_r_class_init get\n");
     EOSRMachineClass *device = EOSR_MACHINE_CLASS(oc);
     printf("eos_r_class_init set\n");
-    device->eos.ram_size = 0x40000000; // 2GB
+    device->eos.ram_size  = 0x80000000; // 2GB
     device->eos.rom0.size = 0x02000000;
     device->eos.rom1.size = 0x04000000;
-    device->eos.rom1.exists = 1; 
     printf("/eos_r_class_init\n");
 }
 
